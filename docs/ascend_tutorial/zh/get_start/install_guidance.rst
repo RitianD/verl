@@ -213,7 +213,7 @@ CANN是NPU上的异构计算架构，以下为arm平台A3安装指令，请参�
    source /usr/local/Ascend/nnal/atb/set_env.sh
    conda create -n verl-sgl-npu python=3.11 -y
    conda activate verl-sgl-npu
-   git clone --recursive https://github.com/verl-project/verl.git
+   git clone -b release/v0.9.1 --recursive https://github.com/verl-project/verl.git
    bash verl/scripts/install_sglang_mcore_npu.sh
    # 如果您仅需要使用FSDP后端
    # USE_MEGATRON=0 bash verl/scripts/install_sglang_mcore_npu.sh

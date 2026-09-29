@@ -9,7 +9,7 @@ Last updated: 08/03/2026.
 依赖          版本                                               说明                                                       
 ============= ================================================= ===================
 CANN          ``9.1.0``                                         CANN软件，帮助开发者实现在昇腾软硬件平台上开发和运行AI业务 
-Python        ``3.11``                                          Python版本                                                 
+Python        ``3.12``                                          Python版本                                                 
 torch         ``2.10.0``                                        PyTorch 深度学习框架基础包                                 
 torch_npu     ``2.10.0.post4``                                  NPU PyTorch 适配插件                                       
 triton        ``3.5.0``                                         Triton，用于编写自定义算子                                 
@@ -77,8 +77,8 @@ verl 依赖安装
 
 .. code:: bash
 
-    git clone https://github.com/verl-project/verl.git
+    git clone -b release/v0.9.1 https://github.com/verl-project/verl.git
     cd verl
-    pip install -e .
     pip install -r requirements-npu.txt
+    pip install -v -e . --no-deps
 
