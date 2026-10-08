@@ -531,6 +531,20 @@ class MegatronEngine(BaseEngine):
             self.engine_config.use_fused_kernels = False
             return
 
+        # Defense in depth: NPU CANN fused CE forbids non-zero entropy_coeff.
+        entropy_coeff = getattr(self.model_config, "entropy_coeff", None)
+        if entropy_coeff is None:
+            entropy_coeff = getattr(self.engine_config, "entropy_coeff", 0.0)
+        from verl.utils.kernel.npu.cann_linear_ce import disable_npu_fused_kernels_if_entropy_enabled
+
+        if not disable_npu_fused_kernels_if_entropy_enabled(
+            use_fused_kernels=True,
+            entropy_coeff=float(entropy_coeff or 0.0),
+            context="MegatronEngine",
+        ):
+            self.engine_config.use_fused_kernels = False
+            return
+
         from verl.models.mcore.model_forward_fused import patch_fused_forward
 
         for model in self.module:

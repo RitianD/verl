@@ -111,7 +111,23 @@ class TrainingWorker(Worker, DistProfilerExtension):
         # we use the one defined in model
         # TODO: this is not elegant and should refactor later
         self.engine_config.use_remove_padding = self.model_config.get("use_remove_padding", False)
-        self.engine_config.use_fused_kernels = self.model_config.get("use_fused_kernels", False)
+        use_fused_kernels = self.model_config.get("use_fused_kernels", False)
+        # NPU CANN fused linear-CE is CE-only; entropy_coeff!=0 must disable fused kernels.
+        entropy_coeff = 0.0
+        if hasattr(self.config, "entropy_coeff"):
+            entropy_coeff = float(getattr(self.config, "entropy_coeff") or 0.0)
+        elif hasattr(self.model_config, "get"):
+            entropy_coeff = float(self.model_config.get("entropy_coeff", 0.0) or 0.0)
+        else:
+            entropy_coeff = float(getattr(self.model_config, "entropy_coeff", 0.0) or 0.0)
+        from verl.utils.kernel.npu.cann_linear_ce import disable_npu_fused_kernels_if_entropy_enabled
+
+        use_fused_kernels = disable_npu_fused_kernels_if_entropy_enabled(
+            use_fused_kernels=use_fused_kernels,
+            entropy_coeff=entropy_coeff,
+            context="TrainingWorker",
+        )
+        self.engine_config.use_fused_kernels = use_fused_kernels
 
         self.profiler_config = self.config.profiler_config
         if self.profiler_config is not None:
@@ -591,6 +607,17 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         if "actor" in self.role:
             actor_config: ActorConfig = omega_conf_to_dataclass(self.config.actor)
             actor_config.model_config = model_config
+            # NPU CANN fused linear-CE is CE-only; disable fused kernels when entropy_coeff!=0.
+            # Must run after model_config is attached (ActorConfig.__post_init__ runs earlier).
+            from verl.utils.kernel.npu.cann_linear_ce import disable_npu_fused_kernels_if_entropy_enabled
+
+            use_fused_kernels = disable_npu_fused_kernels_if_entropy_enabled(
+                use_fused_kernels=bool(model_config.get("use_fused_kernels", False)),
+                entropy_coeff=float(actor_config.entropy_coeff or 0.0),
+                context="ActorRolloutRefWorker",
+            )
+            model_config.use_fused_kernels = use_fused_kernels
+            actor_config.use_fused_kernels = use_fused_kernels
             distillation_config: Optional[DistillationConfig] = (
                 omega_conf_to_dataclass(self.distillation_config) if self.distillation_enabled else None
             )

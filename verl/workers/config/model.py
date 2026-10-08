@@ -83,6 +83,8 @@ class HFModelConfig(BaseConfig):
         "local_hf_config_path",
         "local_tokenizer_path",
         "mtp",
+        # Mutable so NPU can force-disable fused CE when entropy_coeff!=0.
+        "use_fused_kernels",
     }
 
     path: str = MISSING
