@@ -20,9 +20,9 @@ Uses (newer ``npu_*`` names preferred; older aliases also accepted):
   - ``..._backward`` / ``..._grad`` / ``fused_linear_cross_entropy_loss_with_max_sum_grad``
 
 Policy (verl):
-  - Allowed only when ``entropy_coeff == 0`` (CE/logprob path only).
-  - If ``entropy_coeff != 0`` on NPU, fused kernels must be disabled by the caller
-    (see :func:`disable_npu_fused_kernels_if_entropy_enabled`).
+  - Forward always returns ``(logprobs, entropy)``, matching the CUDA fused API.
+  - CANN provides CE gradients only. Non-zero ``dentropy`` (e.g. PPO ``entropy_coeff!=0``)
+    raises in backward; that is independent of whether fused kernels are enabled.
 """
 
 from __future__ import annotations
@@ -93,37 +93,6 @@ def _missing_cann_api_hint() -> str:
         if _resolve_cann_api(torch_npu, role) is None:
             missing.append(f"{role} (tried: {', '.join(names)})")
     return "; ".join(missing) if missing else "unknown"
-
-
-def disable_npu_fused_kernels_if_entropy_enabled(
-    *,
-    use_fused_kernels: bool,
-    entropy_coeff: float,
-    context: str = "",
-) -> bool:
-    """Return updated ``use_fused_kernels`` for NPU.
-
-    On Ascend, CANN fused linear-CE does not cover entropy regularization.
-    When ``entropy_coeff != 0``, fused kernels are forced off.
-    """
-    if not use_fused_kernels:
-        return False
-    if float(entropy_coeff) == 0.0:
-        return True
-
-    from verl.utils.device import get_device_name
-
-    if get_device_name() != "npu":
-        return True
-
-    prefix = f"{context}: " if context else ""
-    logger.warning(
-        "%sNPU fused linear cross-entropy is not supported when entropy_coeff!=0 "
-        "(got entropy_coeff=%s); disabling use_fused_kernels.",
-        prefix,
-        entropy_coeff,
-    )
-    return False
 
 
 def should_use_cann_linear_ce(device: torch.device) -> bool:
@@ -341,8 +310,8 @@ class CannLinearCrossEntropy(torch.autograd.Function):
         if dentropy is not None and torch.any(dentropy != 0):
             raise RuntimeError(
                 "CANN fused linear-CE backward received non-zero dentropy. "
-                "On NPU, use_fused_kernels requires entropy_coeff=0. "
-                "Disable fused kernels or set entropy_coeff=0."
+                "Ascend fused CE has no entropy gradient path; set entropy_coeff=0 "
+                "or disable use_fused_kernels until a fused entropy backward exists."
             )
 
         apis = _resolve_cann_apis()

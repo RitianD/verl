@@ -15,7 +15,6 @@
 
 from .cann_linear_ce import (
     CannLinearCrossEntropy,
-    disable_npu_fused_kernels_if_entropy_enabled,
     is_cann_linear_ce_available,
     should_use_cann_linear_ce,
 )
@@ -24,5 +23,4 @@ __all__ = [
     "CannLinearCrossEntropy",
     "is_cann_linear_ce_available",
     "should_use_cann_linear_ce",
-    "disable_npu_fused_kernels_if_entropy_enabled",
 ]

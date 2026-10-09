@@ -21,37 +21,8 @@ import torch
 from verl.utils.kernel.npu.cann_linear_ce import (
     CannLinearCrossEntropy,
     _resolve_vocab_range,
-    disable_npu_fused_kernels_if_entropy_enabled,
     should_use_cann_linear_ce,
 )
-
-
-@pytest.mark.parametrize(
-    ("use_fused", "entropy_coeff", "device_name", "expected"),
-    [
-        (False, 0.0, "npu", False),
-        (False, 0.1, "npu", False),
-        (True, 0.0, "npu", True),
-        (True, 0.0, "cuda", True),
-        # Non-zero entropy: keep fused on non-NPU, disable on NPU.
-        (True, 0.01, "cuda", True),
-        (True, 0.01, "npu", False),
-        (True, 1.0, "npu", False),
-    ],
-)
-def test_disable_npu_fused_kernels_if_entropy_enabled(monkeypatch, use_fused, entropy_coeff, device_name, expected):
-    monkeypatch.setattr(
-        "verl.utils.device.get_device_name",
-        lambda: device_name,
-    )
-    assert (
-        disable_npu_fused_kernels_if_entropy_enabled(
-            use_fused_kernels=use_fused,
-            entropy_coeff=entropy_coeff,
-            context="unit-test",
-        )
-        is expected
-    )
 
 
 def test_should_use_cann_linear_ce_non_npu_device(monkeypatch):
@@ -122,43 +93,16 @@ def test_resolve_vocab_range_is_half_open():
     assert end - 1 == weight.shape[0] - 1
 
 
-def test_actor_config_validate_disables_fused_on_npu(monkeypatch):
-    from omegaconf import OmegaConf
+def test_resolve_vocab_range_with_tp(monkeypatch):
+    weight = torch.empty(1024, 256)
 
-    from verl.workers.config.actor import ActorConfig
+    class _FakeGroup:
+        pass
 
-    monkeypatch.setattr("verl.utils.device.get_device_name", lambda: "npu")
-
-    cfg = ActorConfig(
-        strategy="fsdp",
-        rollout_n=1,
-        ppo_micro_batch_size_per_gpu=1,
-        use_fused_kernels=True,
-        entropy_coeff=0.01,
+    group = _FakeGroup()
+    monkeypatch.setattr(
+        "verl.utils.kernel.npu.cann_linear_ce.dist.get_rank",
+        lambda pg: 2 if pg is group else 0,
     )
-    model_cfg = OmegaConf.create({"use_fused_kernels": True})
-    cfg.validate(n_gpus=1, train_batch_size=256, model_config=model_cfg)
-
-    assert cfg.use_fused_kernels is False
-    assert model_cfg.use_fused_kernels is False
-
-
-def test_actor_config_validate_keeps_fused_when_entropy_zero(monkeypatch):
-    from omegaconf import OmegaConf
-
-    from verl.workers.config.actor import ActorConfig
-
-    monkeypatch.setattr("verl.utils.device.get_device_name", lambda: "npu")
-
-    cfg = ActorConfig(
-        strategy="fsdp",
-        rollout_n=1,
-        ppo_micro_batch_size_per_gpu=1,
-        use_fused_kernels=True,
-        entropy_coeff=0.0,
-    )
-    model_cfg = OmegaConf.create({"use_fused_kernels": True})
-    cfg.validate(n_gpus=1, train_batch_size=256, model_config=model_cfg)
-
-    assert cfg.use_fused_kernels is True
-    assert model_cfg.use_fused_kernels is True
+    start, end = _resolve_vocab_range(weight, group)
+    assert (start, end) == (2048, 3072)

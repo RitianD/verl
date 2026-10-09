@@ -145,8 +145,6 @@ class ActorConfig(BaseConfig):
         "ppo_infer_micro_batch_size_per_gpu",
         "engine",
         "model_config",
-        # Mutable so NPU can force-disable fused CE when entropy_coeff!=0.
-        "use_fused_kernels",
     }
 
     strategy: str = MISSING
@@ -221,45 +219,8 @@ class ActorConfig(BaseConfig):
         if self.loss_agg_mode not in valid_loss_agg_modes:
             raise ValueError(f"Invalid loss_agg_mode: {self.loss_agg_mode}")
 
-        # Ascend CANN fused linear-CE only covers the CE/logprob path.
-        model_fused = bool(getattr(self.model_config, "use_fused_kernels", False))
-        if self.use_fused_kernels or model_fused:
-            from verl.utils.kernel.npu.cann_linear_ce import disable_npu_fused_kernels_if_entropy_enabled
-
-            allowed = disable_npu_fused_kernels_if_entropy_enabled(
-                use_fused_kernels=True,
-                entropy_coeff=self.entropy_coeff,
-                context="ActorConfig",
-            )
-            if not allowed:
-                self.use_fused_kernels = False
-                if hasattr(self.model_config, "use_fused_kernels"):
-                    self.model_config.use_fused_kernels = False
-
     def validate(self, n_gpus: int, train_batch_size: int, model_config: dict = None):
         """Validate actor configuration with runtime parameters."""
-        if model_config is not None:
-            from verl.utils.kernel.npu.cann_linear_ce import disable_npu_fused_kernels_if_entropy_enabled
-
-            model_fused = bool(model_config.get("use_fused_kernels", False))
-            allowed = disable_npu_fused_kernels_if_entropy_enabled(
-                use_fused_kernels=self.use_fused_kernels or model_fused,
-                entropy_coeff=self.entropy_coeff,
-                context="ActorConfig.validate",
-            )
-            if not allowed:
-                self.use_fused_kernels = False
-                try:
-                    from omegaconf import OmegaConf, open_dict
-
-                    if OmegaConf.is_config(model_config):
-                        with open_dict(model_config):
-                            model_config.use_fused_kernels = False
-                    else:
-                        model_config.use_fused_kernels = False
-                except Exception:
-                    model_config["use_fused_kernels"] = False
-
         if not self.use_dynamic_bsz:
             if train_batch_size < self.ppo_mini_batch_size:
                 raise ValueError(

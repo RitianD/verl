@@ -126,9 +126,10 @@ def linear_cross_entropy(
 ):
     """Fused linear + cross-entropy (+ token entropy).
 
-    On Ascend NPU, dispatches to CANN vocab-parallel fused CE when available
-    (``VERL_NPU_LCE_BACKEND=auto|cann``). That path requires ``entropy_coeff=0``;
-    callers must disable ``use_fused_kernels`` when ``entropy_coeff!=0`` on NPU.
+    Always returns ``(logprobs, entropy)``. On Ascend NPU, dispatches to CANN
+    vocab-parallel fused CE when available (``VERL_NPU_LCE_BACKEND=auto|cann``).
+    CANN CE backward does not support non-zero entropy gradients; PPO
+    ``entropy_coeff`` is applied in the loss and is independent of this dispatch.
     """
     if temperature is None:
         temperature = 1.0

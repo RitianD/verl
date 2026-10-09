@@ -316,15 +316,6 @@ class FSDPEngine(BaseEngine):
             )
 
             use_fused_kernels = self.model_config.use_fused_kernels
-            entropy_coeff = float(getattr(self.model_config, "entropy_coeff", 0.0) or 0.0)
-            from verl.utils.kernel.npu.cann_linear_ce import disable_npu_fused_kernels_if_entropy_enabled
-
-            use_fused_kernels = disable_npu_fused_kernels_if_entropy_enabled(
-                use_fused_kernels=use_fused_kernels,
-                entropy_coeff=entropy_coeff,
-                context="FSDPEngine",
-            )
-            self.model_config.use_fused_kernels = use_fused_kernels
             apply_monkey_patch(
                 model=module,
                 use_remove_padding=self.use_remove_padding,

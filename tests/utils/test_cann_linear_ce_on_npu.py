@@ -35,7 +35,6 @@ from verl.utils.device import get_device_name, is_torch_npu_available
 from verl.utils.kernel.linear_cross_entropy import linear_cross_entropy
 from verl.utils.kernel.npu.cann_linear_ce import (
     CannLinearCrossEntropy,
-    disable_npu_fused_kernels_if_entropy_enabled,
     is_cann_linear_ce_available,
     should_use_cann_linear_ce,
 )
@@ -230,26 +229,6 @@ def test_triton_backend_raises_on_npu(monkeypatch):
         linear_cross_entropy(hidden, weight, labels, temperature)
 
 
-def test_disable_fused_gate_on_real_npu():
-    assert get_device_name() == "npu"
-    assert (
-        disable_npu_fused_kernels_if_entropy_enabled(
-            use_fused_kernels=True,
-            entropy_coeff=0.0,
-            context="npu-test",
-        )
-        is True
-    )
-    assert (
-        disable_npu_fused_kernels_if_entropy_enabled(
-            use_fused_kernels=True,
-            entropy_coeff=0.01,
-            context="npu-test",
-        )
-        is False
-    )
-
-
 def test_direct_cann_apply_matches_dispatch(monkeypatch):
     monkeypatch.setenv("VERL_NPU_LCE_BACKEND", "auto")
     monkeypatch.delenv("VERL_NPU_LCE_RETURN_LOGITS", raising=False)
@@ -268,36 +247,6 @@ def test_direct_cann_apply_matches_dispatch(monkeypatch):
 
     torch.testing.assert_close(via_api[0], via_direct[0], atol=1e-5, rtol=1e-5)
     torch.testing.assert_close(via_api[1], via_direct[1], atol=1e-5, rtol=1e-5)
-
-
-def test_actor_config_validate_on_real_npu():
-    from omegaconf import OmegaConf
-
-    from verl.workers.config.actor import ActorConfig
-
-    cfg = ActorConfig(
-        strategy="fsdp",
-        rollout_n=1,
-        ppo_micro_batch_size_per_gpu=1,
-        use_fused_kernels=True,
-        entropy_coeff=0.01,
-    )
-    model_cfg = OmegaConf.create({"use_fused_kernels": True})
-    cfg.validate(n_gpus=1, train_batch_size=256, model_config=model_cfg)
-    assert cfg.use_fused_kernels is False
-    assert model_cfg.use_fused_kernels is False
-
-    cfg_ok = ActorConfig(
-        strategy="fsdp",
-        rollout_n=1,
-        ppo_micro_batch_size_per_gpu=1,
-        use_fused_kernels=True,
-        entropy_coeff=0.0,
-    )
-    model_ok = OmegaConf.create({"use_fused_kernels": True})
-    cfg_ok.validate(n_gpus=1, train_batch_size=256, model_config=model_ok)
-    assert cfg_ok.use_fused_kernels is True
-    assert model_ok.use_fused_kernels is True
 
 
 if __name__ == "__main__":
