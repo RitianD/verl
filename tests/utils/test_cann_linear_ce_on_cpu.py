@@ -39,9 +39,7 @@ from verl.utils.kernel.npu.cann_linear_ce import (
         (True, 1.0, "npu", False),
     ],
 )
-def test_disable_npu_fused_kernels_if_entropy_enabled(
-    monkeypatch, use_fused, entropy_coeff, device_name, expected
-):
+def test_disable_npu_fused_kernels_if_entropy_enabled(monkeypatch, use_fused, entropy_coeff, device_name, expected):
     monkeypatch.setattr(
         "verl.utils.device.get_device_name",
         lambda: device_name,

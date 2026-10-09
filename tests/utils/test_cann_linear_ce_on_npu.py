@@ -199,9 +199,7 @@ def test_cann_ce_backward_matches_torch_reference(temperature, monkeypatch):
     w_out = weight.detach().clone().requires_grad_()
     out_lp, out_ent = linear_cross_entropy(h_out, w_out, labels, temperature)
     dentropy = torch.zeros_like(out_ent)
-    (d_out_h, d_out_w) = torch.autograd.grad(
-        (out_lp, out_ent), (h_out, w_out), (g_logprobs, dentropy)
-    )
+    (d_out_h, d_out_w) = torch.autograd.grad((out_lp, out_ent), (h_out, w_out), (g_logprobs, dentropy))
     _synchronize()
 
     torch.testing.assert_close(d_out_h.float(), d_ref_h.float(), atol=5e-2, rtol=5e-2)

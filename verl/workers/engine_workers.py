@@ -115,7 +115,7 @@ class TrainingWorker(Worker, DistProfilerExtension):
         # NPU CANN fused linear-CE is CE-only; entropy_coeff!=0 must disable fused kernels.
         entropy_coeff = 0.0
         if hasattr(self.config, "entropy_coeff"):
-            entropy_coeff = float(getattr(self.config, "entropy_coeff") or 0.0)
+            entropy_coeff = float(self.config.entropy_coeff or 0.0)
         elif hasattr(self.model_config, "get"):
             entropy_coeff = float(self.model_config.get("entropy_coeff", 0.0) or 0.0)
         else:

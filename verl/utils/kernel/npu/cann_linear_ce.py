@@ -79,6 +79,7 @@ def _resolve_cann_apis():
 
 
 def is_cann_linear_ce_available() -> bool:
+    """Return True if torch_npu exposes the full CANN fused linear-CE API set."""
     return _resolve_cann_apis() is not None
 
 
@@ -214,16 +215,13 @@ class CannLinearCrossEntropy(torch.autograd.Function):
     ):
         apis = _resolve_cann_apis()
         if apis is None:
-            raise RuntimeError(
-                "CANN fused linear-CE APIs are unavailable: " + _missing_cann_api_hint()
-            )
+            raise RuntimeError("CANN fused linear-CE APIs are unavailable: " + _missing_cann_api_hint())
         online_max_sum, ce_with_max_sum, _backward_fn = apis
 
         global _LOGGED_CANN_DISPATCH
         if not _LOGGED_CANN_DISPATCH:
             logger.info(
-                "linear_cross_entropy: using CANN fused vocab-parallel CE on NPU "
-                "(online=%s, ce=%s)",
+                "linear_cross_entropy: using CANN fused vocab-parallel CE on NPU (online=%s, ce=%s)",
                 getattr(online_max_sum, "__name__", online_max_sum),
                 getattr(ce_with_max_sum, "__name__", ce_with_max_sum),
             )
@@ -310,27 +308,27 @@ class CannLinearCrossEntropy(torch.autograd.Function):
             logprobs = logprobs.sum()
         elif reduction == "mean":
             logprobs = logprobs.mean()
+        elif reduction == "none":
+            # Ensure a flat [num_tokens] tensor for Megatron THD postprocess.
+            logprobs = logprobs.reshape(-1).contiguous()
 
         if softmax is None or (isinstance(softmax, torch.Tensor) and softmax.numel() == 0):
             entropy = torch.zeros(hidden_in.shape[0], device=hidden_in.device, dtype=torch.float32)
         else:
             entropy = _entropy_from_local_softmax(softmax, dist_process_group)
+        if reduction == "none":
+            entropy = entropy.reshape(-1).contiguous()
 
         # Prefer memory-saving backward (logits_max/sum_exp). Fall back to softmax
         # when return_logits=True and softmax is present.
         use_softmax_bwd = (
-            return_logits
-            and softmax is not None
-            and isinstance(softmax, torch.Tensor)
-            and softmax.numel() > 0
+            return_logits and softmax is not None and isinstance(softmax, torch.Tensor) and softmax.numel() > 0
         )
         if use_softmax_bwd:
             ctx.save_for_backward(hidden_in, weight_in, target_mask, masked_target, softmax)
             ctx.bwd_mode = "softmax"
         else:
-            ctx.save_for_backward(
-                hidden_in, weight_in, target_mask, masked_target, logits_max, sum_exp_logits
-            )
+            ctx.save_for_backward(hidden_in, weight_in, target_mask, masked_target, logits_max, sum_exp_logits)
             ctx.bwd_mode = "max_sum"
         ctx.temperature = float(temperature)
         ctx.reduction = reduction
@@ -349,9 +347,7 @@ class CannLinearCrossEntropy(torch.autograd.Function):
 
         apis = _resolve_cann_apis()
         if apis is None:
-            raise RuntimeError(
-                "CANN fused linear-CE APIs are unavailable: " + _missing_cann_api_hint()
-            )
+            raise RuntimeError("CANN fused linear-CE APIs are unavailable: " + _missing_cann_api_hint())
         _online, _ce, backward_fn = apis
 
         temperature = ctx.temperature
