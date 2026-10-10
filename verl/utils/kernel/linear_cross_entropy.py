@@ -128,8 +128,8 @@ def linear_cross_entropy(
 
     Always returns ``(logprobs, entropy)``. On Ascend NPU, dispatches to CANN
     vocab-parallel fused CE when available (``VERL_NPU_LCE_BACKEND=auto|cann``).
-    CANN CE backward does not support non-zero entropy gradients; PPO
-    ``entropy_coeff`` is applied in the loss and is independent of this dispatch.
+    Hybrid backward: CANN CE when ``dentropy==0``; chunked PyTorch CE+entropy
+    (Triton-aligned) when ``dentropy!=0``.
     """
     if temperature is None:
         temperature = 1.0

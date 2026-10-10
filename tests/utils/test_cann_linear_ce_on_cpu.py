@@ -19,7 +19,7 @@ import pytest
 import torch
 
 from verl.utils.kernel.npu.cann_linear_ce import (
-    CannLinearCrossEntropy,
+    _chunked_ce_entropy_backward,
     _resolve_vocab_range,
     should_use_cann_linear_ce,
 )
@@ -74,14 +74,85 @@ def test_should_use_cann_linear_ce_cann_backend_missing_apis(monkeypatch):
         should_use_cann_linear_ce(_NpuDev())
 
 
-def test_cann_backward_rejects_nonzero_dentropy():
-    ctx = object.__new__(object)
-    with pytest.raises(RuntimeError, match="non-zero dentropy"):
-        CannLinearCrossEntropy.backward(
-            ctx,
-            torch.ones(4, dtype=torch.float32),
-            torch.ones(4, dtype=torch.float32),
+@pytest.mark.parametrize("temperature", [1.0, 1.5])
+@pytest.mark.parametrize("chunk_size", [32, 128, 2048])
+def test_chunked_ce_entropy_backward_matches_torch(temperature, chunk_size):
+    """Hybrid CE+H path must match autograd through matmul+CE+Shannon H."""
+    torch.manual_seed(0)
+    num_tokens, hidden_size, vocab_size = 24, 64, 96
+    hidden = torch.empty(num_tokens, hidden_size, dtype=torch.float32).uniform_(-0.5, 0.5)
+    weight = torch.empty(vocab_size, hidden_size, dtype=torch.float32).uniform_(-0.5, 0.5)
+    labels = torch.randint(0, vocab_size, (num_tokens,), dtype=torch.int64)
+    g_logprobs = torch.empty(num_tokens, dtype=torch.float32).uniform_(-1.0, 1.0)
+    g_entropy = torch.empty(num_tokens, dtype=torch.float32).uniform_(-0.5, 0.5)
+
+    h_ref = hidden.detach().clone().requires_grad_()
+    w_ref = weight.detach().clone().requires_grad_()
+    logits = torch.matmul(h_ref, w_ref.T) / temperature
+    logprobs = -torch.nn.functional.cross_entropy(logits, labels, reduction="none")
+    pd = torch.softmax(logits, dim=-1)
+    entropy = torch.logsumexp(logits, dim=-1) - (pd * logits).sum(dim=-1)
+    (d_ref_h, d_ref_w) = torch.autograd.grad((logprobs, entropy), (h_ref, w_ref), (g_logprobs, g_entropy))
+
+    with torch.no_grad():
+        logits_det = torch.matmul(hidden, weight.T) / temperature
+        maximum = logits_det.max(dim=-1).values
+        accumulate = torch.exp(logits_det - maximum[:, None]).sum(dim=-1)
+        hidden_scaled = hidden * (1.0 / temperature)
+        d_h, d_w = _chunked_ce_entropy_backward(
+            g_logprobs,
+            g_entropy,
+            hidden_scaled,
+            weight,
+            labels,
+            maximum,
+            accumulate,
+            temperature,
+            "none",
+            vocab_start=0,
+            chunk_size=chunk_size,
         )
+
+    torch.testing.assert_close(d_h, d_ref_h, atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(d_w, d_ref_w, atol=1e-4, rtol=1e-4)
+
+
+def test_chunked_ce_entropy_backward_ce_only_matches_torch():
+    """dentropy=0 should still match CE-only autograd."""
+    torch.manual_seed(1)
+    num_tokens, hidden_size, vocab_size = 16, 48, 64
+    temperature = 1.0
+    hidden = torch.empty(num_tokens, hidden_size, dtype=torch.float32).uniform_(-0.5, 0.5)
+    weight = torch.empty(vocab_size, hidden_size, dtype=torch.float32).uniform_(-0.5, 0.5)
+    labels = torch.randint(0, vocab_size, (num_tokens,), dtype=torch.int64)
+    g_logprobs = torch.empty(num_tokens, dtype=torch.float32).uniform_(-1.0, 1.0)
+
+    h_ref = hidden.detach().clone().requires_grad_()
+    w_ref = weight.detach().clone().requires_grad_()
+    logits = torch.matmul(h_ref, w_ref.T) / temperature
+    logprobs = -torch.nn.functional.cross_entropy(logits, labels, reduction="none")
+    (d_ref_h, d_ref_w) = torch.autograd.grad(logprobs, (h_ref, w_ref), g_logprobs)
+
+    with torch.no_grad():
+        logits_det = torch.matmul(hidden, weight.T) / temperature
+        maximum = logits_det.max(dim=-1).values
+        accumulate = torch.exp(logits_det - maximum[:, None]).sum(dim=-1)
+        d_h, d_w = _chunked_ce_entropy_backward(
+            g_logprobs,
+            torch.zeros_like(g_logprobs),
+            hidden,
+            weight,
+            labels,
+            maximum,
+            accumulate,
+            temperature,
+            "none",
+            vocab_start=0,
+            chunk_size=40,
+        )
+
+    torch.testing.assert_close(d_h, d_ref_h, atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(d_w, d_ref_w, atol=1e-4, rtol=1e-4)
 
 
 def test_resolve_vocab_range_is_half_open():

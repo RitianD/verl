@@ -31,7 +31,7 @@ import os
 import pytest
 import torch
 
-from verl.utils.device import get_device_name, is_torch_npu_available
+from verl.utils.device import is_torch_npu_available
 from verl.utils.kernel.linear_cross_entropy import linear_cross_entropy
 from verl.utils.kernel.npu.cann_linear_ce import (
     CannLinearCrossEntropy,
@@ -205,18 +205,34 @@ def test_cann_ce_backward_matches_torch_reference(temperature, monkeypatch):
     torch.testing.assert_close(d_out_w.float(), d_ref_w.float(), atol=5e-2, rtol=5e-2)
 
 
-def test_cann_backward_rejects_nonzero_dentropy(monkeypatch):
+@pytest.mark.parametrize("temperature", [1.0, 1.5])
+def test_cann_hybrid_entropy_backward_matches_torch_reference(temperature, monkeypatch):
+    """dentropy!=0 uses chunked CE+H backward (hybrid mid-term path)."""
     monkeypatch.setenv("VERL_NPU_LCE_BACKEND", "cann")
     monkeypatch.delenv("VERL_NPU_LCE_RETURN_LOGITS", raising=False)
-    hidden, weight, labels, temperature = _make_inputs(32, 256, 1024, seed=3)
+    monkeypatch.setenv("VERL_NPU_LCE_CHUNK_SIZE", "512")
+    num_tokens, hidden_size, vocab_size = 64, 512, 2048
+    hidden, weight, labels, temperature = _make_inputs(
+        num_tokens, hidden_size, vocab_size, temperature=temperature, seed=11
+    )
+    g_logprobs = torch.empty(num_tokens, dtype=torch.float32, device=DEVICE).uniform_(-1.0, 1.0)
+    g_entropy = torch.empty(num_tokens, dtype=torch.float32, device=DEVICE).uniform_(-0.5, 0.5)
 
-    out_lp, out_ent = linear_cross_entropy(hidden, weight, labels, temperature)
-    g_logprobs = torch.ones_like(out_lp)
-    dentropy = torch.ones_like(out_ent)
+    h_ref = hidden.detach().clone().requires_grad_()
+    w_ref = weight.detach().clone().requires_grad_()
+    ref_lp, ref_ent = _torch_ce_logprobs_entropy(h_ref, w_ref, labels, temperature)
+    (d_ref_h, d_ref_w) = torch.autograd.grad((ref_lp, ref_ent), (h_ref, w_ref), (g_logprobs, g_entropy))
 
-    with pytest.raises(RuntimeError, match="non-zero dentropy"):
-        torch.autograd.grad((out_lp, out_ent), (hidden, weight), (g_logprobs, dentropy))
+    h_out = hidden.detach().clone().requires_grad_()
+    w_out = weight.detach().clone().requires_grad_()
+    out_lp, out_ent = linear_cross_entropy(h_out, w_out, labels, temperature)
+    (d_out_h, d_out_w) = torch.autograd.grad((out_lp, out_ent), (h_out, w_out), (g_logprobs, g_entropy))
     _synchronize()
+
+    # Forward entropy may be a zero placeholder when return_logits=0; grads still
+    # follow the Triton CE+H formula via chunked recompute.
+    torch.testing.assert_close(d_out_h.float(), d_ref_h.float(), atol=8e-2, rtol=8e-2)
+    torch.testing.assert_close(d_out_w.float(), d_ref_w.float(), atol=8e-2, rtol=8e-2)
 
 
 def test_triton_backend_raises_on_npu(monkeypatch):
